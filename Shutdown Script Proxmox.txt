@@ -1,0 +1,60 @@
+bash -c 'cat > /usr/local/bin/power-check.sh <<EOF
+#!/bin/bash
+
+LOGFILE="/var/log/power-check.log"
+WINDOWS_VM_IP="192.168.50.218"
+FAIL_COUNT=5
+PING_INTERVAL=15
+FAILED=0
+
+are_vms_running() {
+  RUNNING_VMS=\$(qm list | awk '\''$3 == "running" {print $1}'\'')
+  if [[ -n "\$RUNNING_VMS" ]]; then
+    echo "\$(date) - Proxmox VMs are still running. Retrying shutdown check..." >> "\$LOGFILE"
+    return 0
+  else
+    return 1
+  fi
+}
+
+> "\$LOGFILE"
+
+while true; do
+  if ping -c 1 -W 2 "\$WINDOWS_VM_IP" >/dev/null; then
+    FAILED=0
+  else
+    ((FAILED++))
+    echo "\$(date) - Ping failed (\$FAILED/\$FAIL_COUNT)" >> "\$LOGFILE"
+  fi
+
+  if [[ "\$FAILED" -ge "\$FAIL_COUNT" ]]; then
+    while are_vms_running; do
+      sleep "\$PING_INTERVAL"
+    done
+    echo "\$(date) - No response from Windows VM and no running VMs. Shutting down Proxmox..." >> "\$LOGFILE"
+    shutdown -h +1
+    exit 0
+  fi
+
+  sleep "\$PING_INTERVAL"
+done
+EOF
+
+chmod +x /usr/local/bin/power-check.sh
+
+cat > /etc/systemd/system/power-check.service <<EOF
+[Unit]
+Description=Shutdown Proxmox if Windows VM is unreachable
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/power-check.sh
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable power-check
+systemctl start power-check'

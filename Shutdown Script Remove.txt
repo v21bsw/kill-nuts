@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Stop and disable the service (if using systemd)
+systemctl stop power-check 2>/dev/null
+systemctl disable power-check 2>/dev/null
+systemctl daemon-reload 2>/dev/null
+systemctl reset-failed 2>/dev/null
+
+# Stop the service using Synology's method (if applicable)
+synoservice --stop power-check 2>/dev/null
+
+# Kill any running instances
+pkill -f power-check.sh 2>/dev/null
+
+# Remove script, logs, and service files
+rm -f /usr/local/bin/power-check.sh
+rm -f /var/log/power-check.log
+rm -f /etc/systemd/system/power-check.service
+rm -f /usr/local/etc/rc.d/power-check.sh  # For DSM 6 and older
+
+# Final cleanup and verification
+systemctl daemon-reexec 2>/dev/null
+echo "Power-check script and service fully removed!"

@@ -1,0 +1,48 @@
+bash -c 'cat > /usr/local/bin/power-check.sh <<EOF
+#!/bin/bash
+
+# Clear the log file when the script starts
+> /var/log/power-check.log
+
+WINDOWS_VM_IP="192.168.50.218"
+LOGFILE="/var/log/power-check.log"
+FAIL_COUNT=5
+PING_INTERVAL=15
+FAILED=0
+
+while true; do
+  if ping -c 1 -W 2 \$WINDOWS_VM_IP >/dev/null; then
+    FAILED=0
+  else
+    ((FAILED++))
+    echo "\$(date) - Ping failed (\$FAILED/\$FAIL_COUNT)" >> \$LOGFILE
+  fi
+
+  if [ \$FAILED -ge \$FAIL_COUNT ]; then
+    echo "\$(date) - No response from Windows VM. Shutting down..." >> \$LOGFILE
+    shutdown -h +1
+    exit 0
+  fi
+
+  sleep \$PING_INTERVAL
+done
+EOF'
+
+chmod +x /usr/local/bin/power-check.sh
+
+cat > /etc/systemd/system/power-check.service <<EOF
+[Unit]
+Description=Shutdown on Windows VM loss
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/power-check.sh
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable power-check
+systemctl start power-check
