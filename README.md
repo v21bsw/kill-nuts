@@ -1,210 +1,83 @@
-# 🖥️ Power-Check Scripts for Proxmox and VMs  
+# Power-Check Scripts for Proxmox and VMs
 
-### **Automated Shutdown for Proxmox and VMs in Case of Power Failure**  
+## Overview
+This repository contains scripts designed for graceful shutdown of Proxmox hosts and virtual machines in case of a power failure detected by a UPS-hosting VM.
 
-This repository contains scripts that automate the **graceful shutdown** of Proxmox hosts and virtual machines when a **UPS (Uninterruptible Power Supply) goes on battery** and the **UPS-hosting VM shuts down**.  
+There are three main scripts:
 
-## 📌 Features  
-
-✅ **Proxmox Host Script**: Shuts down the Proxmox host once all VMs have powered off.  
-✅ **VM Script**: Shuts down a VM when it detects that the UPS-hosting VM is unreachable.  
-✅ **Uninstallation Script**: Fully removes the scripts and services if no longer needed.  
-✅ **Customizable Settings**: Modify parameters like ping frequency, failure threshold, and log locations.  
+1. **Proxmox Host Script**: Runs on the Proxmox host and shuts it down once all VMs are powered off.
+2. **VM Script**: Runs on a VM and shuts it down when it detects that the UPS VM has gone offline.
+3. **Uninstallation Script**: Removes all files and services related to these scripts.
 
 ---
 
-## 🚀 Installation  
+## 1. Proxmox Host Script
 
-### **1️⃣ Proxmox Host Script**  
-📌 **What It Does**  
-- Runs on the **Proxmox host**.  
-- **Pings the UPS-hosting VM** to check if it is online.  
-- If the UPS VM is **unreachable for a set number of attempts**:  
-  - **Checks for running VMs**.  
-  - If no VMs are running, **shuts down the Proxmox host**.  
-  - If VMs are still running, it **waits** until they power off before shutting down.  
+### What It Does
+This script runs on the **Proxmox host** and performs the following actions:
 
-📜 **Installation Command (Run on Proxmox Host)**  
+- Pings the **UPS-hosting VM** to check if it is still online.
+- If the UPS VM is **unreachable** for a certain number of failed attempts:
+  - **Checks if any VMs are still running**.
+  - If **no VMs are running**, it will **shut down the Proxmox host**.
+  - If VMs are still running, it waits until they are powered off before shutting down the host.
+
+### Installation
+To install the Proxmox Host script, run the provided commands on your Proxmox host. This will configure the script to start on boot via a **systemd service**.
+
+---
+
+## 2. VM Script
+
+### What It Does
+This script runs on a **VM** (which is connected to the UPS) and performs the following actions:
+
+- Pings the **UPS-hosting VM** periodically to check if it is still online.
+- If the **UPS-hosting VM becomes unreachable** (after a set number of failed pings):
+  - The VM **shuts itself down** to prevent any further operations when the UPS is no longer available.
+
+### Installation
+To install the VM Script, run the provided commands on the VM. Like the Proxmox Host script, it will be set up to run automatically on boot via a **systemd service**.
+
+**Customization Options**:
+- Modify the script to set the IP address of the **UPS-hosting VM**, the number of **ping retries** before shutting down, and the **interval between pings**.
+
+---
+
+## 3. Uninstallation Script
+
+### What It Does
+This script is used to **remove all files and services** associated with the Power-Check scripts.
+
+It will:
+
+- **Stop and disable** the systemd services.
+- **Kill any running instances** of the scripts.
+- **Delete script files**, logs, and service files to fully clean up the system.
+
+### Installation
+To remove the Power-Check scripts and services from your system, simply run the provided uninstallation script. This will ensure that all associated files and configurations are safely removed.
+
+---
+
+## ⚙️ Customization Options for All Scripts
+
+You can modify the following variables in the scripts to suit your environment:
+
+| Variable        | Default Value          | Description |
+|-----------------|------------------------|-------------|
+| `WINDOWS_VM_IP` | `192.168.50.218`       | The IP address of the UPS-hosting VM to ping. |
+| `LOGFILE`       | `/var/log/power-check.log` | Path to store logs for monitoring ping failures and shutdown events. |
+| `FAIL_COUNT`    | `5`                    | Number of failed pings before initiating shutdown. |
+| `PING_INTERVAL` | `15` seconds           | Interval in seconds between each ping to the UPS-hosting VM. |
+| `FAILED`        | `0`                    | Counter for the number of failed pings (no need to change this). |
+
+To customize these settings, simply edit the scripts directly on your Proxmox host or VM and update the variables as needed.
+
+---
+
+## 📜 Checking Logs  
+
+To view logs for troubleshooting or confirmation, you can check the log file at:  
 ```bash
-bash -c 'cat > /usr/local/bin/power-check.sh <<EOF
-#!/bin/bash
-
-LOGFILE="/var/log/power-check.log"
-WINDOWS_VM_IP="192.168.50.218"
-FAIL_COUNT=5
-PING_INTERVAL=15
-FAILED=0
-
-are_vms_running() {
-  RUNNING_VMS=\$(qm list | awk '\''$3 == "running" {print $1}'\'')
-  if [[ -n "\$RUNNING_VMS" ]]; then
-    echo "\$(date) - Proxmox VMs are still running. Retrying shutdown check..." >> "\$LOGFILE"
-    return 0
-  else
-    return 1
-  fi
-}
-
-> "\$LOGFILE"
-
-while true; do
-  if ping -c 1 -W 2 "\$WINDOWS_VM_IP" >/dev/null; then
-    FAILED=0
-  else
-    ((FAILED++))
-    echo "\$(date) - Ping failed (\$FAILED/\$FAIL_COUNT)" >> "\$LOGFILE"
-  fi
-
-  if [[ "\$FAILED" -ge "\$FAIL_COUNT" ]]; then
-    while are_vms_running; do
-      sleep "\$PING_INTERVAL"
-    done
-    echo "\$(date) - No response from Windows VM and no running VMs. Shutting down Proxmox..." >> "\$LOGFILE"
-    shutdown -h +1
-    exit 0
-  fi
-
-  sleep "\$PING_INTERVAL"
-done
-EOF
-
-chmod +x /usr/local/bin/power-check.sh
-
-cat > /etc/systemd/system/power-check.service <<EOF
-[Unit]
-Description=Shutdown Proxmox if Windows VM is unreachable
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/power-check.sh
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable power-check
-systemctl start power-check'
-
- VM Script
-📌 What It Does
-
-Runs on a VM that should power down when the UPS-hosting VM goes offline.
-
-Pings the UPS VM at intervals to check its status.
-
-If pings fail a set number of times, the VM shuts itself down.
-
-📜 Installation Command (Run on the VM)
-
-bash
-Copy
-Edit
-bash -c 'cat > /usr/local/bin/power-check.sh <<EOF
-#!/bin/bash
-
-# Clear the log file when the script starts
-> /var/log/power-check.log
-
-WINDOWS_VM_IP="192.168.50.218"
-LOGFILE="/var/log/power-check.log"
-FAIL_COUNT=5
-PING_INTERVAL=15
-FAILED=0
-
-while true; do
-  if ping -c 1 -W 2 \$WINDOWS_VM_IP >/dev/null; then
-    FAILED=0
-  else
-    ((FAILED++))
-    echo "\$(date) - Ping failed (\$FAILED/\$FAIL_COUNT)" >> \$LOGFILE
-  fi
-
-  if [ \$FAILED -ge \$FAIL_COUNT ]; then
-    echo "\$(date) - No response from Windows VM. Shutting down..." >> \$LOGFILE
-    shutdown -h +1
-    exit 0
-  fi
-
-  sleep \$PING_INTERVAL
-done
-EOF'
-
-chmod +x /usr/local/bin/power-check.sh
-
-cat > /etc/systemd/system/power-check.service <<EOF
-[Unit]
-Description=Shutdown on Windows VM loss
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/power-check.sh
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable power-check
-systemctl start power-check
-❌ Uninstallation Script
-📜 What It Does
-
-Stops and disables the power-check service.
-
-Kills any running instances of the script.
-
-Removes script files, logs, and services.
-
-📜 Run This Command to Remove Everything
-
-bash
-Copy
-Edit
-#!/bin/bash
-
-# Stop and disable the service (if using systemd)
-systemctl stop power-check 2>/dev/null
-systemctl disable power-check 2>/dev/null
-systemctl daemon-reload 2>/dev/null
-systemctl reset-failed 2>/dev/null
-
-# Stop the service using Synology's method (if applicable)
-synoservice --stop power-check 2>/dev/null
-
-# Kill any running instances
-pkill -f power-check.sh 2>/dev/null
-
-# Remove script, logs, and service files
-rm -f /usr/local/bin/power-check.sh
-rm -f /var/log/power-check.log
-rm -f /etc/systemd/system/power-check.service
-rm -f /usr/local/etc/rc.d/power-check.sh  # For DSM 6 and older
-
-# Final cleanup and verification
-systemctl daemon-reexec 2>/dev/null
-echo "Power-check script and service fully removed!"
-⚙️ Customization Options
-You can modify the following variables in the script to fit your needs:
-
-Variable	Default Value	Description
-WINDOWS_VM_IP	192.168.50.218	IP address of the UPS-hosting VM to ping.
-LOGFILE	/var/log/power-check.log	Path to store logs for monitoring ping failures and shutdown events.
-FAIL_COUNT	5	Number of failed pings before initiating shutdown.
-PING_INTERVAL	15 seconds	How often (in seconds) to ping the UPS VM.
-FAILED	0	Counter for failed pings (do not change this in normal use).
-🔹 To customize these settings, edit /usr/local/bin/power-check.sh and update the values as needed.
-
-📜 Checking Logs
-To view the logs for debugging or confirmation, run:
-
-bash
-Copy
-Edit
 cat /var/log/power-check.log
-📜 License
-This project is released under the MIT License.
-
-
